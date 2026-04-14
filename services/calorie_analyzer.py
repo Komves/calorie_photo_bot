@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import imghdr
 
 from openai import AsyncOpenAI
 
@@ -35,13 +34,6 @@ class CalorieAnalyzer:
 
     @staticmethod
     def _detect_mime(image_bytes: bytes) -> str:
-        detected = imghdr.what(None, h=image_bytes)
-        if detected == "png":
-            return "image/png"
-        if detected == "gif":
-            return "image/gif"
-        if detected == "webp":
-            return "image/webp"
         return "image/jpeg"
 
     async def analyze_photo(self, image_bytes: bytes) -> str:
