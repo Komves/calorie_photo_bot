@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import imghdr
 
 from openai import AsyncOpenAI
 
@@ -8,17 +9,23 @@ from openai import AsyncOpenAI
 MODEL_NAME = "gpt-5.4"
 
 SYSTEM_PROMPT = (
-    "Ты помощник по оценке калорийности еды по фото. "
-    "Отвечай по-русски. "
-    "Это должна быть примерная оценка, а не точный медицинский расчёт. "
-    "Если на фото не еда или еды не видно достаточно ясно, честно скажи об этом. "
-    "Не придумывай лишние детали. "
-    "Ответ должен быть коротким и полезным.\n\n"
-    "Формат ответа:\n"
+    "Ты помощник по анализу изображений. "
+    "Отвечай по-русски, кратко и по делу.\n\n"
+
+    "Если на фото ЕДА:\n"
     "1. Что изображено\n"
     "2. Примерная калорийность всей порции\n"
-    "3. Очень кратко: белки / жиры / углеводы\n"
-    "4. Короткая оговорка о погрешности"
+    "3. Кратко: белки / жиры / углеводы\n"
+    "4. Полезный совет (например, подходит ли для похудения)\n"
+    "5. Оценка блюда по шкале 1–10\n\n"
+
+    "Если на фото НЕ еда:\n"
+    "1. Что изображено\n"
+    "2. Краткое описание\n"
+    "3. Важные детали\n"
+    "4. Полезная информация или советы\n\n"
+
+    "Если не уверен — честно скажи и предложи варианты."
 )
 
 
@@ -26,9 +33,21 @@ class CalorieAnalyzer:
     def __init__(self, api_key: str) -> None:
         self._client = AsyncOpenAI(api_key=api_key)
 
+    @staticmethod
+    def _detect_mime(image_bytes: bytes) -> str:
+        detected = imghdr.what(None, h=image_bytes)
+        if detected == "png":
+            return "image/png"
+        if detected == "gif":
+            return "image/gif"
+        if detected == "webp":
+            return "image/webp"
+        return "image/jpeg"
+
     async def analyze_photo(self, image_bytes: bytes) -> str:
+        mime_type = self._detect_mime(image_bytes)
         base64_image = base64.b64encode(image_bytes).decode("utf-8")
-        image_data_url = f"data:image/jpeg;base64,{base64_image}"
+        image_data_url = f"data:{mime_type};base64,{base64_image}"
 
         response = await self._client.responses.create(
             model=MODEL_NAME,
@@ -40,8 +59,9 @@ class CalorieAnalyzer:
                         {
                             "type": "input_text",
                             "text": (
-                                "Оцени калорийность еды на фото. "
-                                "Если блюд несколько, оцени суммарно и по возможности кратко по частям."
+                                "Проанализируй изображение и определи, что на нём. "
+                                "Если это еда — оцени калорийность. "
+                                "Если нет — просто объясни, что изображено."
                             ),
                         },
                         {
