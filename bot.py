@@ -14,6 +14,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatAction
 from aiogram.filters import CommandStart
+from aiogram.types import Message, ReplyKeyboardRemove
 
 from config import Settings
 from services.calorie_analyzer import CalorieAnalyzer
@@ -24,9 +25,6 @@ logging.basicConfig(
 )
 
 router = Router()
-
-
-from aiogram.types import ReplyKeyboardRemove
 
 @router.message(CommandStart())
 async def start_handler(message: Message) -> None:
