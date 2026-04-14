@@ -1,0 +1,14 @@
+services:
+  - type: worker
+    name: calorie-photo-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: MAX_PHOTO_SIZE_MB
+        value: "10"
