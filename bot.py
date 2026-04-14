@@ -101,12 +101,9 @@ async def main() -> None:
 
     ssl_context = ssl.create_default_context(cafile=certifi.where())
 
-    session = AiohttpSession(
-        connector=TCPConnector(
-            ssl=ssl_context,
-            family=socket.AF_INET,
-        )
-    )
+    session = AiohttpSession()
+    session._connector_init["ssl"] = ssl_context
+    session._connector_init["family"] = socket.AF_INET
 
     bot = Bot(token=settings.bot_token, session=session)
     dp = Dispatcher()
