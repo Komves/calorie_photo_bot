@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import socket
+import ssl
 import sys
 from io import BytesIO
 
+import certifi
+from aiohttp import TCPConnector, web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatAction
 from aiogram.filters import CommandStart
-from aiogram.types import Message
 
 from config import Settings
 from services.calorie_analyzer import CalorieAnalyzer
@@ -74,13 +77,38 @@ async def photo_handler(
 async def fallback_handler(message: Message) -> None:
     await message.answer("Пришли именно фото еды.")
 
+async def health_handler(_: web.Request) -> web.Response:
+    return web.json_response({"status": "ok"})
+
+
+async def start_healthcheck_server() -> tuple[web.AppRunner, int]:
+    port = int(os.getenv("PORT", "10000"))
+
+    app = web.Application()
+    app.router.add_get("/", health_handler)
+    app.router.add_get("/healthz", health_handler)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    site = web.TCPSite(runner, host="0.0.0.0", port=port)
+    await site.start()
+
+    logging.info("Healthcheck server started on 0.0.0.0:%s", port)
+    return runner, port
 
 async def main() -> None:
     settings = Settings.from_env()
     analyzer = CalorieAnalyzer(api_key=settings.openai_api_key)
 
-    session = AiohttpSession()
-    session._connector_init["family"] = socket.AF_INET
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+
+    session = AiohttpSession(
+        connector=TCPConnector(
+            ssl=ssl_context,
+            family=socket.AF_INET,
+        )
+    )
 
     bot = Bot(token=settings.bot_token, session=session)
     dp = Dispatcher()
@@ -89,8 +117,14 @@ async def main() -> None:
     dp["settings"] = settings
     dp.include_router(router)
 
-    await dp.start_polling(bot)
+    web_runner, port = await start_healthcheck_server()
+    logging.info("Render port binding active on port %s", port)
 
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await web_runner.cleanup()
+        await bot.session.close()
 
 if __name__ == "__main__":
     if sys.platform.startswith("win"):
