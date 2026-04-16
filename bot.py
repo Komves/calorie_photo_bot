@@ -1,23 +1,22 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import socket
 import ssl
-import sys
 from io import BytesIO
 
 import certifi
-from aiohttp import TCPConnector, web
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatAction
 from aiogram.filters import CommandStart
-from aiogram.types import Message, ReplyKeyboardRemove
+from aiogram.types import Message, ReplyKeyboardRemove, Update
 
 from config import Settings
 from services.calorie_analyzer import CalorieAnalyzer
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,12 +25,13 @@ logging.basicConfig(
 
 router = Router()
 
+
 @router.message(CommandStart())
 async def start_handler(message: Message) -> None:
     await message.answer(
-        "Привет. Пришли фото еды, и я оценю калорийность.\n\n"
-        "Важно: это примерная оценка, а не точный диетологический расчёт.",
-        reply_markup=ReplyKeyboardRemove()
+        "Привет. Пришли фото, и я постараюсь его разобрать.\n\n"
+        "Если это еда — оценю калорийность. Если не еда — просто скажу, что на фото.",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -73,29 +73,25 @@ async def photo_handler(
 
 @router.message()
 async def fallback_handler(message: Message) -> None:
-    await message.answer("Пришли именно фото еды.")
+    await message.answer("Пришли фото.")
+
 
 async def health_handler(_: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
-async def start_healthcheck_server() -> tuple[web.AppRunner, int]:
-    port = int(os.getenv("PORT", "10000"))
+async def webhook_handler(request: web.Request) -> web.Response:
+    bot: Bot = request.app["bot"]
+    dp: Dispatcher = request.app["dp"]
 
-    app = web.Application()
-    app.router.add_get("/", health_handler)
-    app.router.add_get("/healthz", health_handler)
+    data = await request.json()
+    update = Update.model_validate(data, context={"bot": bot})
 
-    runner = web.AppRunner(app)
-    await runner.setup()
+    await dp.feed_update(bot, update)
+    return web.Response(text="ok")
 
-    site = web.TCPSite(runner, host="0.0.0.0", port=port)
-    await site.start()
 
-    logging.info("Healthcheck server started on 0.0.0.0:%s", port)
-    return runner, port
-
-async def main() -> None:
+async def on_startup(app: web.Application) -> None:
     settings = Settings.from_env()
     analyzer = CalorieAnalyzer(api_key=settings.openai_api_key)
 
@@ -112,16 +108,41 @@ async def main() -> None:
     dp["settings"] = settings
     dp.include_router(router)
 
-    web_runner, port = await start_healthcheck_server()
-    logging.info("Render port binding active on port %s", port)
+    base_url = os.getenv("WEBHOOK_BASE_URL", "").strip().rstrip("/")
+    if not base_url:
+        raise ValueError("WEBHOOK_BASE_URL is not set")
 
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await web_runner.cleanup()
-        await bot.session.close()
+    webhook_url = f"{base_url}/webhook"
+
+    app["bot"] = bot
+    app["dp"] = dp
+    app["settings"] = settings
+
+    await bot.set_webhook(webhook_url, drop_pending_updates=True)
+
+    logging.info("Webhook set to %s", webhook_url)
+    logging.info("Healthcheck server started on 0.0.0.0:%s", os.getenv("PORT", "10000"))
+
+
+async def on_cleanup(app: web.Application) -> None:
+    bot: Bot = app["bot"]
+    await bot.session.close()
+
+
+def create_app() -> web.Application:
+    app = web.Application()
+    app.router.add_get("/", health_handler)
+    app.router.add_get("/healthz", health_handler)
+    app.router.add_post("/webhook", webhook_handler)
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
+    return app
+
+
+def main() -> None:
+    port = int(os.getenv("PORT", "10000"))
+    web.run_app(create_app(), host="0.0.0.0", port=port)
+
 
 if __name__ == "__main__":
-    if sys.platform.startswith("win"):
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    asyncio.run(main())
+    main()
